@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+pydub
+librosa
+numpy
+python-multipart
+httpx
+pytest
+streamlit
+requests
