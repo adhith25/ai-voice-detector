@@ -2,10 +2,17 @@ import streamlit as st
 import requests
 import base64
 import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configuration
 API_URL = "http://localhost:8000/detect-voice"
 SUPPORTED_LANGUAGES = ["Tamil", "English", "Hindi", "Malayalam", "Telugu"]
+# Read API Key from environment variable
+API_KEY = os.getenv("VOICE_API_KEY")
 
 # Page Config
 st.set_page_config(
@@ -44,8 +51,13 @@ if st.button("Analyze Voice", type="primary"):
                     "language": selected_language
                 }
                 
+                # Prepare headers
+                headers = {}
+                if API_KEY:
+                    headers["x-api-key"] = API_KEY
+                
                 # Send Request
-                response = requests.post(API_URL, json=payload)
+                response = requests.post(API_URL, json=payload, headers=headers)
                 
                 # Handle Response
                 if response.status_code == 200:

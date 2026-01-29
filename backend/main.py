@@ -1,10 +1,16 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Security, Depends
+from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, validator, Field
 from typing import Optional, Dict, Any, List
 import base64
 import io
 import tempfile
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 import numpy as np
 from pydub import AudioSegment
 import librosa
@@ -16,6 +22,32 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # Import local modules
 from features import extract_features
 from model import classify_voice
+
+# API Key Security Configuration
+API_KEY_NAME = "x-api-key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    """
+    Validates the API key from the request header against the environment variable.
+    """
+    expected_api_key = os.getenv("VOICE_API_KEY")
+    
+    # If the server hasn't set an API key, we default to denying access for security
+    if not expected_api_key:
+         # You might want to log this in production
+         raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key not configured on server",
+        )
+         
+    if api_key_header == expected_api_key:
+        return api_key_header
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API Key",
+        )
 
 app = FastAPI(
     title="Voice Classification API",
@@ -45,7 +77,7 @@ class VoiceDetectionResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
 
 @app.post("/detect-voice", response_model=VoiceDetectionResponse)
-async def detect_voice(request: VoiceDetectionRequest):
+async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(get_api_key)):
     """
     Detects the classification of the voice from base64 encoded audio.
     
