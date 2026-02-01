@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, status, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
-from pydantic import BaseModel, validator, Field
+from pydantic import BaseModel, validator, Field, model_validator
 from typing import Optional, Dict, Any, List
 import base64
 import io
@@ -60,8 +60,30 @@ SUPPORTED_LANGUAGES = {"Tamil", "English", "Hindi", "Malayalam", "Telugu"}
 
 # Define the input model
 class VoiceDetectionRequest(BaseModel):
-    audio_base64: str = Field(..., description="Base64 encoded MP3 audio string")
+    audio_base64: Optional[str] = Field(None, description="Base64 encoded MP3 audio string")
+    audioBase64: Optional[str] = Field(None, description="Alias for audio_base64")
+    audio_base64_format: Optional[str] = Field(None, description="Alias for audio_base64")
     language: Optional[str] = Field(None, description="Language code of the audio")
+
+    @model_validator(mode='before')
+    @classmethod
+    def check_audio_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Identify which keys are present and not None
+            present_keys = [k for k in ['audio_base64', 'audioBase64', 'audio_base64_format'] 
+                           if k in data and data[k] is not None]
+            
+            if not present_keys:
+                raise ValueError("Missing audio payload. Provide exactly one of: 'audio_base64', 'audioBase64', 'audio_base64_format'.")
+            
+            if len(present_keys) > 1:
+                raise ValueError(f"Ambiguous input. Only one audio field allowed. Found: {', '.join(present_keys)}")
+            
+            # Normalize to audio_base64
+            key = present_keys[0]
+            if key != 'audio_base64':
+                data['audio_base64'] = data[key]
+        return data
 
     @validator("language")
     def validate_language(cls, v):
