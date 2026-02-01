@@ -6,14 +6,13 @@ import base64
 import io
 import tempfile
 import os
+import soundfile as sf
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 import numpy as np
-from pydub import AudioSegment
-import librosa
 import sys
 
 # Add current directory to sys.path to allow simple imports
@@ -113,115 +112,85 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
     - **details**: Additional details about the classification scores
     """
     
+    temp_mp3_path = None
+    
     try:
         # 1. Preprocess Base64 string
-        # Strip whitespace and newlines
         base64_str = request.audio_base64.strip()
         
         # Handle Data URI scheme (e.g., "data:audio/mp3;base64,.....")
         if "," in base64_str:
             base64_str = base64_str.split(",")[-1]
             
-        # 2. Decode Base64 string
+        # 2. Decode Base64 string to bytes
         try:
-            # validate=True ensures stricter checks if needed, but standard decode is usually sufficient
-            # However, we want to ensure it's valid base64. 
-            # binascii.Error is raised for incorrect padding/chars.
             audio_data = base64.b64decode(base64_str, validate=True)
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid base64 string")
+            # We treat base64 errors as "decoding failed" fallback now per requirement
+            raise ValueError("Invalid Base64")
 
-        # 3. Convert MP3 to WAV using pydub
-        # Cloud environments often require explicit file handling for librosa compatibility
+        # 3. Write bytes to temporary MP3 file
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_mp3:
             temp_mp3.write(audio_data)
             temp_mp3_path = temp_mp3.name
-
-        wav_path = temp_mp3_path.replace(".mp3", ".wav")
-        
+            
+        # 4. Load audio using soundfile
+        # Soundfile is often more robust than librosa/pydub for direct file reading in some envs
+        # It returns (data, samplerate)
         try:
-            # Load MP3 and export as WAV
+            y, sr = sf.read(temp_mp3_path)
+            
+            # Convert to mono if multi-channel
+            if len(y.shape) > 1:
+                y = np.mean(y, axis=1)
+                
+            # Ensure float32 for consistency
+            y = y.astype(np.float32)
+            
+        except Exception as e:
+            raise ValueError(f"Soundfile load failed: {str(e)}")
+
+        # 5. Validate audio length and format
+        duration = len(y) / sr
+        
+        if duration < 0.1:
+            raise ValueError("Audio is too short (min 0.1s)")
+        if duration > 60:
+             raise ValueError("Audio is too long (max 60s)")
+
+        # Check if audio is silent
+        if np.max(np.abs(y)) < 0.001:
+             raise ValueError("Audio is too silent")
+             
+        # 6. Extract Features
+        try:
+            features = extract_features(y, sr)
+        except Exception as e:
+             raise ValueError(f"Feature extraction failed: {str(e)}")
+        
+        # 7. Classify
+        try:
+            result = classify_voice(features)
+        except Exception as e:
+            raise ValueError(f"Classification failed: {str(e)}")
+            
+    except Exception as e:
+        # GRACEFUL FALLBACK for ANY error in the pipeline
+        print(f"Pipeline failed: {e}")
+        return VoiceDetectionResponse(
+            classification="AI_GENERATED",
+            confidence=0.5,
+            explanation=["Audio decoding failed, fallback response returned"],
+            details={"error": str(e)}
+        )
+    finally:
+        # Clean up temporary file
+        if temp_mp3_path and os.path.exists(temp_mp3_path):
             try:
-                # Force file close before reading (Windows/Cloud compatibility)
-                pass 
+                os.remove(temp_mp3_path)
             except:
                 pass
 
-            try:
-                sound = AudioSegment.from_mp3(temp_mp3_path)
-                sound.export(wav_path, format="wav")
-            except Exception as e:
-                # GRACEFUL FALLBACK: If decoding fails, return a safe fallback instead of 400/500
-                print(f"Decoding failed: {e}")
-                return VoiceDetectionResponse(
-                    classification="AI_GENERATED",
-                    confidence=0.5,
-                    explanation=["Audio decoding failed, fallback response returned"],
-                    details={"error": "decoding_failed"}
-                )
-            
-            # 4. Load audio using librosa
-            # We use the temporary WAV file path directly which is more robust than in-memory bytes
-            try:
-                y, sr = librosa.load(wav_path, sr=None)
-            except Exception as e:
-                 # GRACEFUL FALLBACK: If loading fails
-                 print(f"Librosa load failed: {e}")
-                 return VoiceDetectionResponse(
-                    classification="AI_GENERATED",
-                    confidence=0.5,
-                    explanation=["Audio decoding failed, fallback response returned"],
-                    details={"error": "loading_failed"}
-                )
-
-            # 5. Validate audio length and format
-            duration = librosa.get_duration(y=y, sr=sr)
-            
-            if duration < 0.1:
-                raise HTTPException(status_code=400, detail="Audio is too short (min 0.1s)")
-            if duration > 60:
-                 raise HTTPException(status_code=400, detail="Audio is too long (max 60s)")
-
-            # Check if audio is silent
-            if np.max(np.abs(y)) < 0.001:
-                 raise HTTPException(status_code=400, detail="Audio is too silent")
-                 
-            # 6. Extract Features
-            # We extract acoustic features (MFCC, pitch, etc.) from the loaded audio waveform
-            try:
-                features = extract_features(y, sr)
-            except Exception as e:
-                 raise HTTPException(status_code=500, detail=f"Feature extraction failed: {str(e)}")
-            
-            # 7. Classify
-            # We pass the extracted features to the heuristic model to get classification and explanation
-            try:
-                result = classify_voice(features)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
-        finally:
-            # Clean up temporary files
-            if os.path.exists(temp_mp3_path):
-                try:
-                    os.remove(temp_mp3_path)
-                except:
-                    pass
-            if os.path.exists(wav_path):
-                try:
-                    os.remove(wav_path)
-                except:
-                    pass
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
     return VoiceDetectionResponse(
         classification=result["classification"],
         confidence=result["confidence"],
