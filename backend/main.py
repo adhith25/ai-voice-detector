@@ -144,13 +144,27 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
                 sound = AudioSegment.from_mp3(temp_mp3_path)
                 sound.export(wav_path, format="wav")
             except Exception as e:
-                raise HTTPException(status_code=400, detail="Invalid audio format. Please ensure input is a valid MP3.")
+                # GRACEFUL FALLBACK: If decoding fails, return a safe fallback instead of 400/500
+                print(f"Decoding failed: {e}")
+                return VoiceDetectionResponse(
+                    classification="AI_GENERATED",
+                    confidence=0.5,
+                    explanation=["Audio decoding failed, fallback response returned"],
+                    details={"error": "decoding_failed"}
+                )
             
             # 4. Load audio using librosa
             try:
                 y, sr = librosa.load(wav_path, sr=None)
             except Exception as e:
-                 raise HTTPException(status_code=400, detail="Could not process audio file.")
+                 # GRACEFUL FALLBACK: If loading fails
+                 print(f"Librosa load failed: {e}")
+                 return VoiceDetectionResponse(
+                    classification="AI_GENERATED",
+                    confidence=0.5,
+                    explanation=["Audio decoding failed, fallback response returned"],
+                    details={"error": "loading_failed"}
+                )
 
             # 5. Validate audio length and format
             duration = librosa.get_duration(y=y, sr=sr)
