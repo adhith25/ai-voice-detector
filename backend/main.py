@@ -183,12 +183,13 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
             
     except Exception as e:
         # GRACEFUL FALLBACK for ANY error in the pipeline
+        # Log the error internally but do not expose it to the user
         print(f"Pipeline failed: {e}")
         return VoiceDetectionResponse(
             classification="AI_GENERATED",
             confidence=0.5,
-            explanation=["Audio decoding failed, fallback response returned"],
-            details={"error": str(e)}
+            explanation=["Audio could not be decoded reliably; fallback response returned"],
+            details=None
         )
     finally:
         # Clean up temporary file
