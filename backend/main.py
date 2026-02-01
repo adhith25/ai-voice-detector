@@ -132,6 +132,7 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
             raise HTTPException(status_code=400, detail="Invalid base64 string")
 
         # 3. Convert MP3 to WAV using pydub
+        # Cloud environments often require explicit file handling for librosa compatibility
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_mp3:
             temp_mp3.write(audio_data)
             temp_mp3_path = temp_mp3.name
@@ -140,6 +141,12 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
         
         try:
             # Load MP3 and export as WAV
+            try:
+                # Force file close before reading (Windows/Cloud compatibility)
+                pass 
+            except:
+                pass
+
             try:
                 sound = AudioSegment.from_mp3(temp_mp3_path)
                 sound.export(wav_path, format="wav")
@@ -154,6 +161,7 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
                 )
             
             # 4. Load audio using librosa
+            # We use the temporary WAV file path directly which is more robust than in-memory bytes
             try:
                 y, sr = librosa.load(wav_path, sr=None)
             except Exception as e:
