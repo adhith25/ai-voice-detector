@@ -114,13 +114,24 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
     """
     
     try:
-        # 1. Decode Base64 string
+        # 1. Preprocess Base64 string
+        # Strip whitespace and newlines
+        base64_str = request.audio_base64.strip()
+        
+        # Handle Data URI scheme (e.g., "data:audio/mp3;base64,.....")
+        if "," in base64_str:
+            base64_str = base64_str.split(",")[-1]
+            
+        # 2. Decode Base64 string
         try:
-            audio_data = base64.b64decode(request.audio_base64)
+            # validate=True ensures stricter checks if needed, but standard decode is usually sufficient
+            # However, we want to ensure it's valid base64. 
+            # binascii.Error is raised for incorrect padding/chars.
+            audio_data = base64.b64decode(base64_str, validate=True)
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid base64 string")
 
-        # 2. Convert MP3 to WAV using pydub
+        # 3. Convert MP3 to WAV using pydub
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_mp3:
             temp_mp3.write(audio_data)
             temp_mp3_path = temp_mp3.name
@@ -135,13 +146,13 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
             except Exception as e:
                 raise HTTPException(status_code=400, detail="Invalid audio format. Please ensure input is a valid MP3.")
             
-            # 3. Load audio using librosa
+            # 4. Load audio using librosa
             try:
                 y, sr = librosa.load(wav_path, sr=None)
             except Exception as e:
                  raise HTTPException(status_code=400, detail="Could not process audio file.")
 
-            # 4. Validate audio length and format
+            # 5. Validate audio length and format
             duration = librosa.get_duration(y=y, sr=sr)
             
             if duration < 0.1:
@@ -153,14 +164,14 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
             if np.max(np.abs(y)) < 0.001:
                  raise HTTPException(status_code=400, detail="Audio is too silent")
                  
-            # 5. Extract Features
+            # 6. Extract Features
             # We extract acoustic features (MFCC, pitch, etc.) from the loaded audio waveform
             try:
                 features = extract_features(y, sr)
             except Exception as e:
                  raise HTTPException(status_code=500, detail=f"Feature extraction failed: {str(e)}")
             
-            # 6. Classify
+            # 7. Classify
             # We pass the extracted features to the heuristic model to get classification and explanation
             try:
                 result = classify_voice(features)
