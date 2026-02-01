@@ -130,13 +130,20 @@ async def detect_voice(request: VoiceDetectionRequest, api_key: str = Depends(ge
             raise ValueError("Invalid Base64")
 
         # 3. Write bytes to temporary MP3 file
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_mp3:
-            temp_mp3.write(audio_data)
-            temp_mp3_path = temp_mp3.name
-            
+        # Use mkstemp for robust file creation that avoids lock issues on Windows
+        fd, temp_mp3_path = tempfile.mkstemp(suffix=".mp3")
+        
+        try:
+            # Write data to the file descriptor and close it
+            with os.fdopen(fd, 'wb') as tmp:
+                tmp.write(audio_data)
+        except Exception as e:
+            # If writing fails, try to clean up
+            if os.path.exists(temp_mp3_path):
+                os.remove(temp_mp3_path)
+            raise ValueError(f"Failed to write temp file: {str(e)}")
+
         # 4. Load audio using soundfile
-        # Soundfile is often more robust than librosa/pydub for direct file reading in some envs
-        # It returns (data, samplerate)
         try:
             y, sr = sf.read(temp_mp3_path)
             
