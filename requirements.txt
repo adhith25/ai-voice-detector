@@ -10,4 +10,4 @@ pytest
 streamlit
 requests
 python-dotenv
-soundfile
+
